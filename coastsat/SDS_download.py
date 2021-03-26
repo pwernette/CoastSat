@@ -124,7 +124,7 @@ def retrieve_images(inputs):
                     acc_georef = im_meta['properties']['GEOMETRIC_RMSE_MODEL']
                 else:
                     acc_georef = 12 # default value of accuracy (RMSE = 12m)
-            elif satname in ['S2']:
+            elif satname in ['S2','HiRes']:
                 # Sentinel-2 products don't provide a georeferencing accuracy (RMSE as in Landsat)
                 # but they have a flag indicating if the geometric quality control was passed or failed
                 # if passed a value of 1 is stored if failed a value of -1 is stored in the metadata
@@ -263,6 +263,42 @@ def retrieve_images(inputs):
                 filename_txt = im_fn['10m'].replace('_10m','').replace('.tif','')
                 metadict = {'filename':im_fn['10m'],'acc_georef':georef_accs[i],
                             'epsg':im_epsg[i]}
+            
+            # High-Resolution Imagery download
+            elif satname in ['HiRes']:
+                bands['08m'] = [im_bands[1], im_bands[2], im_bands[3]] # multispectral bands
+                for key in bands.keys():
+                    im_fn[key] = im_date + '_' + satname + '_' + inputs['sitename'] + '_' + key + suffix
+                # if two images taken at the same date add 'dup' to the name (duplicate)
+                if any(im_fn['08m'] in _ for _ in all_names):
+                    for key in bands.keys():
+                        im_fn[key] = im_date + '_' + satname + '_' + inputs['sitename'] + '_' + key + '_dup' + suffix
+                    # also check for triplicates (only on S2 imagery) and add 'tri' to the name
+                    if im_fn['08m'] in all_names:
+                        for key in bands.keys():
+                            im_fn[key] = im_date + '_' + satname + '_' + inputs['sitename'] + '_' + key + '_tri' + suffix
+                all_names.append(im_fn['08m'])
+                filenames.append(im_fn['08m'])
+                # download .tif from EE (multispectral bands at 3 different resolutions)
+                while True:
+                    try:
+                        im_ee = ee.Image(im_meta['id'])
+                        local_data_08m = download_tif(im_ee, inputs['polygon'], bands['10m'], filepaths[1])
+                        local_data_20m = download_tif(im_ee, inputs['polygon'], bands['20m'], filepaths[2])
+                        local_data_60m = download_tif(im_ee, inputs['polygon'], bands['60m'], filepaths[3])
+                        break
+                    except:
+                        continue
+                # rename the files as the image is downloaded as 'data.tif'
+                try: # 08m
+                    os.rename(local_data_08m, os.path.join(filepaths[1], im_fn['08m']))
+                except: # overwrite if already exists
+                    os.remove(os.path.join(filepaths[1], im_fn['10m']))
+                    os.rename(local_data_08m, os.path.join(filepaths[1], im_fn['08m']))
+                # metadata for .txt file
+                filename_txt = im_fn['08m'].replace('_08m','').replace('.tif','')
+                metadict = {'filename':im_fn['08m'],'acc_georef':georef_accs[i],
+                            'epsg':im_epsg[i]}
 
             # write metadata
             with open(os.path.join(filepaths[0],filename_txt + '.txt'), 'w') as f:
@@ -319,7 +355,7 @@ def get_metadata(inputs):
     # initialize metadata dict
     metadata = dict([])
     # loop through the satellite missions
-    for satname in ['L5','L7','L8','S2']:
+    for satname in ['L5','L7','L8','S2','HiRes']:
         # if a folder has been created for the given satellite mission
         if satname in os.listdir(filepath):
             # update the metadata dict
@@ -391,9 +427,10 @@ def check_images_available(inputs):
     col_names_T1 = {'L5':'LANDSAT/LT05/C01/T1_TOA',
                  'L7':'LANDSAT/LE07/C01/T1_TOA',
                  'L8':'LANDSAT/LC08/C01/T1_TOA',
-                 'S2':'COPERNICUS/S2'}
+                 'S2':'COPERNICUS/S2',
+                 'HiRes':'SKYSAT/GEN-A/PUBLIC/ORTHO/RGB'}
 
-    print('- In Landsat Tier 1 & Sentinel-2 Level-1C:')
+    print('- In Landsat Tier 1 & Sentinel-2 Level-1C & High-Resolution Imagery:')
     im_dict_T1 = dict([])
     sum_img = 0
     for satname in inputs['sat_list']:
@@ -423,7 +460,8 @@ def check_images_available(inputs):
     # otherwise check how many images are available in Landsat Tier 2
     col_names_T2 = {'L5':'LANDSAT/LT05/C01/T2_TOA',
                  'L7':'LANDSAT/LE07/C01/T2_TOA',
-                 'L8':'LANDSAT/LC08/C01/T2_TOA'}
+                 'L8':'LANDSAT/LC08/C01/T2_TOA',
+                 'HiRes':'SKYSAT/GEN-A/PUBLIC/ORTHO/RGB'}
     print('- In Landsat Tier 2:', end='\n')
     im_dict_T2 = dict([])
     sum_img = 0
@@ -558,6 +596,8 @@ def create_folder_structure(im_folder, satname):
         filepaths.append(os.path.join(im_folder, satname, '10m'))
         filepaths.append(os.path.join(im_folder, satname, '20m'))
         filepaths.append(os.path.join(im_folder, satname, '60m'))
+    elif satname in ['HiRes']:
+        filepaths.append(os.path.join(im_folder, satname, '08m'))
     # create the subfolders if they don't exist already
     for fp in filepaths:
         if not os.path.exists(fp): os.makedirs(fp)
